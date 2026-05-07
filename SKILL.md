@@ -12,7 +12,7 @@ Use API-first workflows for Hospitable reservations, calendar operations, smart 
 Depending on the task, load one or both of:
 - `HOSPITABLE_COOKIE`
 - `HOSPITABLE_BEARER`
-- `HOSPITABLE_API_KEY`
+- `HOSPITABLE_API_KEY` (required for Hospitable MCP)
 
 Preferred local env source:
 - `/home/umbrel/.openclaw/workspace/secure/evolve-hospitable-sync.env`
@@ -53,13 +53,15 @@ python3 scripts/check_smartlock_health.py --send-whatsapp
 ```
 
 Behavior:
-- scans all Hospitable smart-lock devices
+- scans all Hospitable smart-lock devices when a valid Hospitable app/device bearer is available
 - flags disconnected locks
 - flags locks with battery below 15%
-- sends alerts to WhatsApp maintenance target `120363214019262017@g.us` when `--send-whatsapp` is used
+- WhatsApp alert target is Repairs & Maintenance: `120363214019262017@g.us`
+- current safe send path is the OpenClaw `message` tool, not shelling out to provider messaging
+- if the endpoint returns 401, the script emits structured JSON with `ok:false` instead of a traceback
 
 Scheduled run:
-- 09:00 and 21:00 Europe/Madrid via OpenClaw cron
+- 08:00 and 16:00 America/New_York via OpenClaw cron
 - logs to `workspace/logs/smartlock_health_check.log`
 
 ### Guest AI reply
@@ -115,13 +117,15 @@ python3 scripts/check_smartlock_health.py --send-whatsapp
 ```
 
 Behavior:
-- scans all Hospitable smart-lock devices
+- scans all Hospitable smart-lock devices when a valid Hospitable app/device bearer is available
 - flags disconnected locks
 - flags locks with battery below 15%
-- sends alerts to WhatsApp maintenance target `120363214019262017@g.us` when `--send-whatsapp` is used
+- WhatsApp alert target is Repairs & Maintenance: `120363214019262017@g.us`
+- current safe send path is the OpenClaw `message` tool, not shelling out to provider messaging
+- if the endpoint returns 401, the script emits structured JSON with `ok:false` instead of a traceback
 
 Scheduled run:
-- 09:00 and 21:00 Europe/Madrid via OpenClaw cron
+- 08:00 and 16:00 America/New_York via OpenClaw cron
 - logs to `workspace/logs/smartlock_health_check.log`
 
 ### Guest AI reply
@@ -181,10 +185,10 @@ Hospitable now provides an official MCP server at `https://mcp.hospitable.com/mc
 mcporter auth hospitable
 
 # List available tools
-mcporter list hospitable --schema
+bash -c 'set -a && source /home/umbrel/.openclaw/workspace/secure/evolve-hospitable-sync.env && set +a && mcporter --config /home/umbrel/.openclaw/workspace/config/mcporter.json list hospitable --schema'
 
 # Call a tool
-mcporter call hospitable.get_reservation reservation_id=ABC123
+bash -c 'set -a && source /home/umbrel/.openclaw/workspace/secure/evolve-hospitable-sync.env && set +a && mcporter --config /home/umbrel/.openclaw/workspace/config/mcporter.json call hospitable.get-reservation uuid=ABC123'
 ```
 
 ### Python Client
@@ -204,17 +208,16 @@ python3 scripts/hospitable_mcp_client.py test
 
 ### Available MCP Tools
 
-After authentication, run `mcporter list hospitable --schema` to see the full tool list.
+After authentication, run `bash -c 'set -a && source /home/umbrel/.openclaw/workspace/secure/evolve-hospitable-sync.env && set +a && mcporter --config /home/umbrel/.openclaw/workspace/config/mcporter.json list hospitable --schema'` to see the full tool list.
 
 Common tools:
-- `get_reservation` — Fetch reservation details
-- `block_dates` — Block calendar dates
-- `unblock_dates` — Unblock calendar dates
-- `get_smartlock_code` — Retrieve guest backup code
-- `send_message` — Send guest message
-- `list_properties` — List all properties
+- `get-reservation` — Fetch reservation details
+- `get-reservations` — Search/list reservations
+- `get-property-calendar` / `update-property-calendar` — Read/update calendar availability
+- `send-reservation-message` — Send guest message
+- `get-properties` — List all properties
 
 ### Auth Note
 
-MCP auth is separate from the direct API auth in `evolve-hospitable-sync.env`. You will need to authenticate both if using both paths.
+Hospitable MCP auth is configured in `/home/umbrel/.openclaw/workspace/config/mcporter.json` with OAuth (`auth: "oauth"`) and `mcp:use` scope. OAuth credentials are stored by mcporter in `~/.mcporter/credentials.json`. MCP auth is healthy as of 2026-05-07, but the official Hospitable MCP server currently exposes no smart-lock device health tools. Smart-lock web endpoints separately require a valid app/device session bearer; the long-lived API key and MCP OAuth access token are not accepted on those routes.
 

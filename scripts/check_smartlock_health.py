@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -19,6 +20,9 @@ DEFAULT_WHATSAPP_TARGET = "120363214019262017@g.us"  # Earlbnb Repairs & Mainten
 DEFAULT_BATTERY_THRESHOLD = 15
 DEFAULT_LIMIT = 100
 STATE_PATH = Path("/home/umbrel/.openclaw/workspace/data/hospitable/smartlock_health_state.json")
+MCPORTER_CONFIG = "/home/umbrel/.openclaw/workspace/config/mcporter.json"
+MCPORTER_BIN = os.environ.get("MCPORTER_BIN", "mcporter")
+
 
 
 def resolve_creds() -> tuple[str, str | None]:
@@ -56,6 +60,34 @@ def build_headers(token: str, cookie: str | None) -> dict[str, str]:
     if cookie:
         headers["cookie"] = cookie
     return headers
+
+
+
+
+def mcp_auth_status() -> dict[str, Any]:
+    """Return Hospitable MCP auth/tool status without exposing tokens."""
+    try:
+        proc = subprocess.run(
+            [MCPORTER_BIN, "--config", MCPORTER_CONFIG, "list", "hospitable", "--output", "json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except Exception as e:
+        return {"authenticated": False, "error": type(e).__name__}
+    if proc.returncode != 0:
+        return {"authenticated": False, "error": (proc.stderr or proc.stdout)[-500:]}
+    try:
+        payload = json.loads(proc.stdout)
+        tools = payload.get("tools", []) if isinstance(payload, dict) else []
+        names = [t.get("name", "") for t in tools if isinstance(t, dict)]
+    except json.JSONDecodeError:
+        # mcporter may truncate very large JSON list output around 64 KiB. Tool
+        # names appear near each tool entry, so recover enough for capability
+        # detection from the partial text rather than treating auth as failed.
+        names = re.findall(r'"name"\s*:\s*"([^"]+)"', proc.stdout)
+    smartlock_tools = [n for n in names if "smart" in n.lower() or "lock" in n.lower()]
+    return {"authenticated": True, "tool_count": len(names), "smartlock_tools": smartlock_tools}
 
 
 def list_all_devices(headers: dict[str, str], limit: int = DEFAULT_LIMIT) -> list[dict[str, Any]]:
@@ -193,13 +225,15 @@ def main() -> int:
     except HTTPError as e:
         status = e.response.status_code if e.response is not None else None
         detail = e.response.text[:300] if e.response is not None else str(e)
+        mcp_status = mcp_auth_status() if status == 401 else None
         error_payload = {
             "ok": False,
             "checked_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
             "error": "smartlock_device_list_failed",
             "status_code": status,
             "detail": detail,
-            "hint": "Hospitable smart-lock web endpoints require a valid app/device session bearer. The long-lived API key works for reservations/metrics but is not accepted by these smart-lock routes.",
+            "mcp_status": mcp_status,
+            "hint": "Hospitable MCP auth is usable for supported MCP tools, but the current MCP tool list exposes no smart-lock device health tools. Smart-lock health still requires a valid Hospitable app/device session bearer or a future MCP smart-lock device tool.",
         }
         if args.json:
             print(json.dumps(error_payload, indent=2))

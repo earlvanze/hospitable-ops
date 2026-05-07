@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from requests import HTTPError
 
 API_ROOT = "https://api.hospitable.com"
 SECURE_ENV_PATH = Path("/home/umbrel/.openclaw/workspace/secure/evolve-hospitable-sync.env")
@@ -21,16 +22,25 @@ STATE_PATH = Path("/home/umbrel/.openclaw/workspace/data/hospitable/smartlock_he
 
 
 def resolve_creds() -> tuple[str, str | None]:
-    token = os.getenv("HOSPITABLE_BEARER", "").strip()
+    # Smart-lock web endpoints require a logged-in app/device bearer. The
+    # long-lived Hospitable API key works for metrics/reservations but is not
+    # accepted by /v1/smartlocks routes, so prefer bearer for this checker.
+    bearer = os.getenv("HOSPITABLE_BEARER", "").strip()
+    api_key = os.getenv("HOSPITABLE_API_KEY", "").strip()
     cookie = os.getenv("HOSPITABLE_COOKIE", "").strip() or None
+    file_bearer = ""
+    file_api_key = ""
     if SECURE_ENV_PATH.exists():
         for line in SECURE_ENV_PATH.read_text(encoding="utf-8").splitlines():
-            if not token and line.startswith("HOSPITABLE_BEARER="):
-                token = line.split("=", 1)[1].strip()
+            if line.startswith("HOSPITABLE_BEARER="):
+                file_bearer = line.split("=", 1)[1].strip()
+            if line.startswith("HOSPITABLE_API_KEY="):
+                file_api_key = line.split("=", 1)[1].strip()
             if not cookie and line.startswith("HOSPITABLE_COOKIE="):
                 cookie = line.split("=", 1)[1].strip()
+    token = bearer or file_bearer or api_key or file_api_key
     if not token:
-        raise SystemExit("Missing HOSPITABLE_BEARER")
+        raise SystemExit("Missing HOSPITABLE_BEARER/HOSPITABLE_API_KEY")
     return token, cookie
 
 
@@ -178,7 +188,24 @@ def main() -> int:
 
     token, cookie = resolve_creds()
     headers = build_headers(token, cookie)
-    devices = list_all_devices(headers, limit=args.limit)
+    try:
+        devices = list_all_devices(headers, limit=args.limit)
+    except HTTPError as e:
+        status = e.response.status_code if e.response is not None else None
+        detail = e.response.text[:300] if e.response is not None else str(e)
+        error_payload = {
+            "ok": False,
+            "checked_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "error": "smartlock_device_list_failed",
+            "status_code": status,
+            "detail": detail,
+            "hint": "Hospitable smart-lock web endpoints require a valid app/device session bearer. The long-lived API key works for reservations/metrics but is not accepted by these smart-lock routes.",
+        }
+        if args.json:
+            print(json.dumps(error_payload, indent=2))
+        else:
+            print(f"smartlock_device_list_failed status={status}: {detail}")
+        return 2
     issues = classify_issues(devices, battery_threshold=args.battery_threshold)
     result = {
         "checked_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),

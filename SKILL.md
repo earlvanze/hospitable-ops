@@ -44,6 +44,7 @@ Subcommands:
 - `scripts/get_backup_code.py` — guest smart-lock backup code lookup
 - `scripts/unlock_door.py` — lock/unlock smart locks by fuzzy door name
 - `scripts/check_smartlock_health.py` — inspect lock connectivity and battery, optionally alert WhatsApp maintenance
+- `scripts/hospitable_smartlock_dashboard.py` — HAR-derived smart-lock dashboard helper for devices, thermostats, reservation/manual codes, notifications, settings, connections, and filters
 
 ### Smart-lock health checks
 
@@ -63,6 +64,30 @@ Behavior:
 Scheduled run:
 - 08:00 and 16:00 America/New_York via OpenClaw cron
 - logs to `workspace/logs/smartlock_health_check.log`
+
+
+### Smart-lock dashboard HAR helper
+
+Use the HAR-derived helper when you need smart-lock dashboard data beyond the health check:
+
+```bash
+cd /home/umbrel/.openclaw/workspace/skills/hospitable-ops
+python3 scripts/hospitable_smartlock_dashboard.py devices --summary
+python3 scripts/hospitable_smartlock_dashboard.py reservation-codes --summary --max-pages 3
+python3 scripts/hospitable_smartlock_dashboard.py manual-codes --summary
+python3 scripts/hospitable_smartlock_dashboard.py thermostats --summary
+python3 scripts/hospitable_smartlock_dashboard.py notifications --summary --max-pages 2
+python3 scripts/hospitable_smartlock_dashboard.py settings
+python3 scripts/hospitable_smartlock_dashboard.py filters-devices
+python3 scripts/hospitable_smartlock_dashboard.py filters-codes
+```
+
+Behavior:
+- uses web/app smart-lock routes captured from `~/Downloads/har/devices_my.hospitable.com.har`
+- requires valid `HOSPITABLE_BEARER` app/device token
+- default output redacts secret-looking keys such as code/PIN/backup/token
+- use `--show-secrets` only in a safe channel when the actual code/PIN is explicitly needed
+- `mark-notification-read` is dry-run unless `--execute` is supplied
 
 ### Guest AI reply
 - `scripts/trigger_reply.py` — fetch reservation context and send an AI-style reply for a reservation/message workflow
@@ -166,6 +191,7 @@ Behavior:
 - `references/ai-reply-api.md`
 - `references/metrics-endpoints.md`
 - `references/booking-edit-surface.md`
+- `references/smartlock-dashboard-har.md`
 
 ## Payload note for update-manual-booking
 
@@ -221,3 +247,7 @@ Common tools:
 
 Hospitable MCP auth is configured in `/home/umbrel/.openclaw/workspace/config/mcporter.json` with OAuth (`auth: "oauth"`) and `mcp:use` scope. OAuth credentials are stored by mcporter in `~/.mcporter/credentials.json`. MCP auth is healthy as of 2026-05-07, but the official Hospitable MCP server currently exposes no smart-lock device health tools. Smart-lock web endpoints separately require a valid app/device session bearer; the long-lived API key and MCP OAuth access token are not accepted on those routes.
 
+
+### Smart-lock web routes from HAR
+
+For dashboard endpoints discovered from the HAR, read `references/smartlock-dashboard-har.md`. These are not official MCP tools. They fill the current MCP smart-lock gap using Hospitable web/app API routes.

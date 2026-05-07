@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -25,27 +26,50 @@ MCPORTER_BIN = os.environ.get("MCPORTER_BIN", "mcporter")
 
 
 
+class SmartlockAuthError(RuntimeError):
+    def __init__(self, message: str, *, detail: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.detail = detail or {}
+
+
+def jwt_claims(token: str) -> dict[str, Any]:
+    if token.count(".") != 2:
+        return {}
+    try:
+        payload = token.split(".", 2)[1] + "==="
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return {}
+
+
 def resolve_creds() -> tuple[str, str | None]:
     # Smart-lock web endpoints require a logged-in app/device bearer. The
-    # long-lived Hospitable API key works for metrics/reservations but is not
-    # accepted by /v1/smartlocks routes, so prefer bearer for this checker.
+    # long-lived PAT-style Hospitable API key works for public API resources but
+    # is not accepted by /v1/smartlocks routes, so do not silently fall back to it.
     bearer = os.getenv("HOSPITABLE_BEARER", "").strip()
-    api_key = os.getenv("HOSPITABLE_API_KEY", "").strip()
     cookie = os.getenv("HOSPITABLE_COOKIE", "").strip() or None
-    file_bearer = ""
-    file_api_key = ""
     if SECURE_ENV_PATH.exists():
         for line in SECURE_ENV_PATH.read_text(encoding="utf-8").splitlines():
-            if line.startswith("HOSPITABLE_BEARER="):
-                file_bearer = line.split("=", 1)[1].strip()
-            if line.startswith("HOSPITABLE_API_KEY="):
-                file_api_key = line.split("=", 1)[1].strip()
+            if not bearer and line.startswith("HOSPITABLE_BEARER="):
+                bearer = line.split("=", 1)[1].strip()
             if not cookie and line.startswith("HOSPITABLE_COOKIE="):
                 cookie = line.split("=", 1)[1].strip()
-    token = bearer or file_bearer or api_key or file_api_key
-    if not token:
-        raise SystemExit("Missing HOSPITABLE_BEARER/HOSPITABLE_API_KEY")
-    return token, cookie
+    if not bearer:
+        raise SmartlockAuthError("Missing HOSPITABLE_BEARER", detail={"missing": "HOSPITABLE_BEARER"})
+    claims = jwt_claims(bearer)
+    exp = claims.get("exp")
+    if isinstance(exp, (int, float)) and exp <= datetime.now(timezone.utc).timestamp():
+        raise SmartlockAuthError(
+            "HOSPITABLE_BEARER expired",
+            detail={
+                "expired": True,
+                "exp": exp,
+                "issuer": claims.get("iss"),
+                "subject": claims.get("sub"),
+                "team_id": claims.get("team_id"),
+            },
+        )
+    return bearer, cookie
 
 
 def build_headers(token: str, cookie: str | None) -> dict[str, str]:
@@ -218,7 +242,22 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="Print JSON result.")
     args = ap.parse_args()
 
-    token, cookie = resolve_creds()
+    try:
+        token, cookie = resolve_creds()
+    except SmartlockAuthError as e:
+        error_payload = {
+            "ok": False,
+            "checked_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "error": "smartlock_auth_unavailable",
+            "detail": e.detail,
+            "mcp_status": mcp_auth_status(),
+            "hint": "The Hospitable smart-lock API endpoints exist, but they require a logged-in app/device bearer. The stored HOSPITABLE_BEARER is missing or expired; refresh it from a Hospitable web/app login session.",
+        }
+        if args.json:
+            print(json.dumps(error_payload, indent=2))
+        else:
+            print(error_payload["hint"])
+        return 2
     headers = build_headers(token, cookie)
     try:
         devices = list_all_devices(headers, limit=args.limit)

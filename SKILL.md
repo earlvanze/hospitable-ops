@@ -44,7 +44,6 @@ Subcommands:
 - `scripts/get_backup_code.py` — guest smart-lock backup code lookup
 - `scripts/unlock_door.py` — lock/unlock smart locks by fuzzy door name
 - `scripts/check_smartlock_health.py` — inspect lock connectivity and battery, optionally alert WhatsApp maintenance
-- `scripts/hospitable_smartlock_dashboard.py` — HAR-derived smart-lock dashboard helper for devices, thermostats, reservation/manual codes, notifications, settings, connections, and filters
 
 ### Smart-lock health checks
 
@@ -62,32 +61,8 @@ Behavior:
 - if the endpoint returns 401, the script emits structured JSON with `ok:false` instead of a traceback
 
 Scheduled run:
-- 08:00 and 16:00 America/New_York via OpenClaw cron
+- 09:00 and 21:00 Europe/Madrid via OpenClaw cron
 - logs to `workspace/logs/smartlock_health_check.log`
-
-
-### Smart-lock dashboard HAR helper
-
-Use the HAR-derived helper when you need smart-lock dashboard data beyond the health check:
-
-```bash
-cd /home/umbrel/.openclaw/workspace/skills/hospitable-ops
-python3 scripts/hospitable_smartlock_dashboard.py devices --summary
-python3 scripts/hospitable_smartlock_dashboard.py reservation-codes --summary --max-pages 3
-python3 scripts/hospitable_smartlock_dashboard.py manual-codes --summary
-python3 scripts/hospitable_smartlock_dashboard.py thermostats --summary
-python3 scripts/hospitable_smartlock_dashboard.py notifications --summary --max-pages 2
-python3 scripts/hospitable_smartlock_dashboard.py settings
-python3 scripts/hospitable_smartlock_dashboard.py filters-devices
-python3 scripts/hospitable_smartlock_dashboard.py filters-codes
-```
-
-Behavior:
-- uses web/app smart-lock routes captured from `~/Downloads/har/devices_my.hospitable.com.har`
-- requires valid `HOSPITABLE_BEARER` app/device token
-- default output redacts secret-looking keys such as code/PIN/backup/token
-- use `--show-secrets` only in a safe channel when the actual code/PIN is explicitly needed
-- `mark-notification-read` is dry-run unless `--execute` is supplied
 
 ### Guest AI reply
 - `scripts/trigger_reply.py` — fetch reservation context and send an AI-style reply for a reservation/message workflow
@@ -150,7 +125,7 @@ Behavior:
 - if the endpoint returns 401, the script emits structured JSON with `ok:false` instead of a traceback
 
 Scheduled run:
-- 08:00 and 16:00 America/New_York via OpenClaw cron
+- 09:00 and 21:00 Europe/Madrid via OpenClaw cron
 - logs to `workspace/logs/smartlock_health_check.log`
 
 ### Guest AI reply
@@ -191,7 +166,6 @@ Behavior:
 - `references/ai-reply-api.md`
 - `references/metrics-endpoints.md`
 - `references/booking-edit-surface.md`
-- `references/smartlock-dashboard-har.md`
 
 ## Payload note for update-manual-booking
 
@@ -245,9 +219,37 @@ Common tools:
 
 ### Auth Note
 
-Hospitable MCP auth is configured in `/home/umbrel/.openclaw/workspace/config/mcporter.json` with OAuth (`auth: "oauth"`) and `mcp:use` scope. OAuth credentials are stored by mcporter in `~/.mcporter/credentials.json`. MCP auth is healthy as of 2026-05-07, but the official Hospitable MCP server currently exposes no smart-lock device health tools. Smart-lock web endpoints separately require a valid app/device session bearer; the long-lived API key and MCP OAuth access token are not accepted on those routes.
+Hospitable MCP auth is configured in `/home/umbrel/.openclaw/workspace/config/mcporter.json` to send `Authorization: Bearer ${HOSPITABLE_API_KEY}`. The token value must be an MCP-capable Hospitable token with `mcp:use` scope. The current general long-lived `HOSPITABLE_API_KEY` works for reservations/metrics but the MCP server rejects it with HTTP 403: token cannot use Hospitable MCP. Smart-lock web endpoints separately require a valid app/device session bearer; the long-lived API key is not accepted on those routes.
 
 
-### Smart-lock web routes from HAR
+### Weekly Recurring Bookings
 
-For dashboard endpoints discovered from the HAR, read `references/smartlock-dashboard-har.md`. These are not official MCP tools. They fill the current MCP smart-lock gap using Hospitable web/app API routes.
+Create weekly recurring manual bookings (e.g., Monday-Friday corporate stays):
+
+```bash
+cd /home/umbrel/.openclaw/workspace/skills/hospitable-ops
+python3 scripts/create_weekly_bookings.py \
+  --property-id afe45be5-4776-446e-b397-1968ce334961 \
+  --start-date 2026-06-01 \
+  --end-date 2027-05-31 \
+  --rate 68750 \
+  --first-name Joseph \
+  --last-name Cone \
+  --email jenny@tenmconstruction.com \
+  --phone "(680) 290-4541" \
+  --checkin-day 0 \
+  --checkout-day 4 \
+  --notes "Weekly corporate booking"
+```
+
+Options:
+- `--checkin-day`: 0=Monday (default), 6=Sunday
+- `--checkout-day`: 4=Friday (default), 0=Monday
+- `--dry-run`: Preview without creating
+- `--delay`: Seconds between requests (default 0.5)
+
+Key implementation details:
+- Uses `mcporter call hospitable create-reservation` with JSON objects passed as quoted strings
+- Handles validation errors gracefully (e.g., "Property is not available on...")
+- Returns booking IDs and success/failure counts
+- Supports dry-run mode for testing

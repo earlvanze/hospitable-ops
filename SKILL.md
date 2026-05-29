@@ -253,3 +253,52 @@ Key implementation details:
 - Handles validation errors gracefully (e.g., "Property is not available on...")
 - Returns booking IDs and success/failure counts
 - Supports dry-run mode for testing
+
+### Single Booking Creation
+
+Create individual manual bookings with full control:
+
+```bash
+cd /home/umbrel/.openclaw/workspace/skills/hospitable-ops
+python3 scripts/create_booking.py \
+  --property-id afe45be5-4776-446e-b397-1968ce334961 \
+  --check-in 2026-06-01 \
+  --check-out 2026-06-05 \
+  --first-name Joseph \
+  --last-name Cone \
+  --email jenny@tenmconstruction.com \
+  --phone "(680) 290-4541" \
+  --adults 1 \
+  --rate 68750 \
+  --notes "Corporate weekly booking"
+```
+
+Features:
+- Full guest info (name, email, phone)
+- Customizable occupancy (adults, children, infants, pets)
+- Rate in cents (e.g., 68750 = $687.50)
+- Supports dry-run mode
+- JSON file input for batch operations
+- Proper error handling with specific error types
+
+JSON file input example:
+```json
+{
+  "property_id": "afe45be5-4776-446e-b397-1968ce334961",
+  "check_in": "2026-06-01",
+  "check_out": "2026-06-05",
+  "guest_first_name": "Joseph",
+  "guest_last_name": "Cone",
+  "guest_email": "jenny@tenmconstruction.com",
+  "guest_phone": "(680) 290-4541",
+  "adults": 1,
+  "rate_cents": 68750,
+  "notes": "Weekly corporate booking"
+}
+```
+
+Usage with JSON file:
+```bash
+python3 scripts/create_booking.py --json-file booking.json
+```
+
